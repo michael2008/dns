@@ -3,7 +3,8 @@ module github.com/miekg/dns
 go 1.14
 
 require (
-	golang.org/x/net v0.0.0-20210226172049-e18ecbb05110
+	github.com/michael2008/caddy v1.1.2
+	golang.org/x/net v0.0.0-20210805182204-aaa1db679c0d
 	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c
-	golang.org/x/sys v0.0.0-20210303074136-134d130e1a04
+	golang.org/x/sys v0.0.0-20210806184541-e5e7981a1069
 )

@@ -3,10 +3,16 @@
 package dns
 
 import (
+	"bufio"
+	"bytes"
 	"net"
+	"strconv"
+	"strings"
 
 	"golang.org/x/net/ipv4"
 	"golang.org/x/net/ipv6"
+
+	"github.com/michael2008/caddy/proxyprotocol"
 )
 
 // This is the required size of the OOB buffer to pass to ReadMsgUDP.
@@ -28,22 +34,61 @@ var udpOOBSize = func() int {
 // SessionUDP holds the remote address and the associated
 // out-of-band data.
 type SessionUDP struct {
-	raddr   *net.UDPAddr
-	context []byte
+	raddr         *net.UDPAddr
+	context       []byte
+	local, remote net.Addr
 }
 
 // RemoteAddr returns the remote network address.
-func (s *SessionUDP) RemoteAddr() net.Addr { return s.raddr }
+func (s *SessionUDP) RemoteAddr() net.Addr { return s.remote }
+
+func (s *SessionUDP) LocalAddr() net.Addr { return s.local }
 
 // ReadFromSessionUDP acts just like net.UDPConn.ReadFrom(), but returns a session object instead of a
 // net.UDPAddr.
 func ReadFromSessionUDP(conn *net.UDPConn, b []byte) (int, *SessionUDP, error) {
 	oob := make([]byte, udpOOBSize)
-	n, oobn, _, raddr, err := conn.ReadMsgUDP(b, oob)
+	buf := make([]byte, 256+512)
+	n, oobn, _, raddr, err := conn.ReadMsgUDP(buf, oob)
 	if err != nil {
 		return n, nil, err
 	}
-	return n, &SessionUDP{raddr, oob[:oobn]}, err
+	// detect and parse proxy proto here
+	r := bufio.NewReader(bytes.NewBuffer(buf))
+	ok, err := proxyprotocol.Detect(r)
+	if err != nil {
+		return n, nil, err
+	}
+	var local, remote net.Addr
+
+	if ok {
+		header, err := proxyprotocol.Parse(r)
+		if err != nil {
+			return n, nil, err
+		}
+		local = toUDPAddr(header.DestAddr())
+		remote = toUDPAddr(header.SrcAddr())
+		//fmt.Printf("UDP proxy proto detected, local: %s, remote: %s\n", local.String(), remote.String())
+	} else {
+		local = conn.LocalAddr() // could looks like '[::]:53'
+		remote = raddr
+		//fmt.Printf("local: %s, remote: %s\n", local.String(), remote.String())
+	}
+
+	// now read actual request content
+	n, err = r.Read(b)
+	if err != nil {
+		return n, nil, err
+	}
+
+	s := &SessionUDP{raddr: raddr, context: oob[:oobn], local: local, remote: remote}
+	return n, s, err
+}
+
+func toUDPAddr(addr net.Addr) *net.UDPAddr {
+	ipPort := strings.Split(addr.String(), ":")
+	p, _ := strconv.ParseInt(ipPort[1], 10, 32)
+	return &net.UDPAddr{IP: net.ParseIP(ipPort[0]), Port: int(p)}
 }
 
 // WriteToSessionUDP acts just like net.UDPConn.WriteTo(), but uses a *SessionUDP instead of a net.Addr.
